@@ -7,7 +7,7 @@
 -- ==================================================================
 
 -- 🔧 Замените на ссылку вашего репозитория
-local REPO = "https://raw.githubusercontent.com/ваш-ник/ваш-репозиторий/main/"
+local REPO = "https://raw.githubusercontent.com/by-FreeMaN/Reactor-Control-for-OpenComputers/main/"
 
 -- Файл с актуальной версией
 local VERSION_URL = REPO .. "version.txt"
@@ -268,3 +268,4 @@ if not ok then
     print("Нажмите Enter...")
     event.pull("key_down")
 end
+
