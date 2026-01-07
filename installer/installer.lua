@@ -2,7 +2,7 @@
 -- Author: P1KaChU337
 
 ------------------------------------ config ------------------------------------
-local REPOSITORY  = "https://raw.githubusercontent.com/P1KaChU337/Reactor-Control-for-OpenComputers/refs/heads/main/"
+local REPOSITORY  = "https://raw.githubusercontent.com/by-FreeMaN/Reactor-Control-for-OpenComputers/refs/heads/main/"
 
 local filesToDownload = {
   {url = REPOSITORY.."/lib/advancedLua.lua",                path="/lib/advancedLua.lua"},
@@ -191,4 +191,5 @@ if not ok then
   term.clear()
   io.stderr:write("Installer crashed: "..tostring(err).."\n")
 end
+
 
