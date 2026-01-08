@@ -1,9 +1,6 @@
--- [ Reactor Control v1.1.2 by P1KaChU337 ] 
--- Да радуйтесь, я вам открыл исходники, пользуйтесь на здоровье главное не удаляйте мой никнейм, и информацию о Boosty  
--- не забывайте про меня когда будете пиратить программу, а то я вас найду и отрублю вам руки, шучу конечно 
--- но всё же помните про меня, я старался для вас, спасибо что пользуетесь моей программой, удачи вам и вашим реакторам!
-
--- В будущем я создам свои либы, код в разы уменьшится, и вы сможете использовать мои либы уже в своих проектах
+-- Reactor Control v1.1 build 3
+-- ⚙
+-- ⓘ
 
 -- ----------------------------------------------------------------------------------------------------
 local computer = require("computer")
@@ -26,6 +23,60 @@ local exit = false
 local version = "1.1"
 local build = "2"
 local progVer = version .. "." .. build
+-- ----------------------------------------------------------------------------------------------------
+-- НОВЫЕ ПЕРЕМЕННЫЕ ДЛЯ ОТСЛЕЖИВАНИЯ ВРЕМЕНИ ЖИДКОСТИ
+-- ----------------------------------------------------------------------------------------------------
+local timeLeftColors = {
+    good  = 0x61ff52,  -- зелёный
+    warn  = 0xfff700,  -- жёлтый
+    error = 0xff0000,  -- красный
+}
+
+-- ----------------------------------------------------------------------------------------------------
+-- ФУНКЦИЯ: РАССЧЁТ ОСТАВШЕГОСЯ ВРЕМЕНИ ЖИДКОСТИ
+-- ----------------------------------------------------------------------------------------------------
+local function getTimeLeft(fluid, consumption)
+    if consumption <= 0 then return math.huge, "∞" end
+    local seconds = fluid / consumption
+    return seconds, secondsToHMS(seconds)
+end
+
+-- ----------------------------------------------------------------------------------------------------
+-- ФУНКЦИЯ: ВЫБОР ЦВЕТА В ЗАВИСИМОСТИ ОТ ВРЕМЕНИ
+-- ----------------------------------------------------------------------------------------------------
+local function getTimeLeftColor(seconds)
+    if seconds > 3600 then           -- >1 час
+        return timeLeftColors.good
+    elseif seconds > 600 then        -- >10 минут
+        return timeLeftColors.warn
+    else                             -- <10 минут
+        return timeLeftColors.error
+    end
+end
+
+-- ----------------------------------------------------------------------------------------------------
+-- ФУНКЦИЯ: ПРОВЕРКА И ОПОВЕЩЕНИЕ ПРИ НИЗКОМ УРОВНЕ
+-- ----------------------------------------------------------------------------------------------------
+local function checkFluidWarnings(fluid, consumption, timeLeftSec)
+    local percent = (fluid / maxThreshold) * 100
+    local msg = nil
+
+    if percent <= 1 then
+        msg = string.format("КРИТИЧЕСКИЙ УРОВЕНЬ ЖИДКОСТИ: %.1f%%! Осталось %s!", percent, secondsToHMS(timeLeftSec))
+    elseif percent <= 5 then
+        msg = string.format("ОЧЕНЬ НИЗКИЙ УРОВЕНЬ ЖИДКОСТИ: %.1f%%! Осталось %s!", percent, secondsToHMS(timeLeftSec))
+    elseif percent <= 10 then
+        msg = string.format("НИЗКИЙ УРОВЕНЬ ЖИДКОСТИ: %.1f%%. Осталось %s.", percent, secondsToHMS(timeLeftSec))
+    end
+
+    if msg then
+        message(msg, timeLeftColors.error, 34)
+        if isChatBox then
+            chatBox.say("§c" .. msg)
+        end
+    end
+end
+
 
 local imagesFolder = "/home/images/" -- Путь к изображению
 local dataFolder = "/home/data/"
@@ -117,6 +168,19 @@ local supportersText = nil
 local isChatBox = component.isAvailable("chat_box") or false
 local chatBox = isChatBox and component.chat_box or nil
 local chatThread = nil
+local chatCommands = {
+    ["@help"] = true,
+    ["@status"] = true,
+    ["@setporog"] = true,
+    ["@start"] = true,
+    ["@stop"] = true,
+    ["@restart"] = true,
+    ["@exit"] = true,
+    ["@changelog"] = true,
+    ["@useradd"] = true,
+    ["@userdel"] = true,
+    ["@info"] = true
+}
 
 local widgetCoords = {
     {10, 6}, {36, 6}, {65, 6}, {91, 6},
@@ -131,6 +195,8 @@ local config = {
     clickArea4 = {x1=37, y1=45, x2=58, y2=46},
     clickArea5 = {x1=60, y1=45, x2=78, y2=46},
     clickArea6 = {x1=60, y1=48, x2=78, y2=49},
+    clickArea19 = {x1=2, y1=45, x2=7, y2=46},
+    clickArea20 = {x1=2, y1=48, x2=7, y2=49},
     -- Координаты для кнопок на виджетах
     clickArea7 = {x1=widgetCoords[1][1]+5, y1=widgetCoords[1][2]+9, x2=widgetCoords[1][1]+11, y2=widgetCoords[1][2]+10}, -- Реактор 1
     clickArea8 = {x1=widgetCoords[2][1]+5, y1=widgetCoords[2][2]+9, x2=widgetCoords[2][1]+11, y2=widgetCoords[2][2]+10}, -- Реактор 2
@@ -914,9 +980,10 @@ local maxWidth = 33
 
 -- функция бегущей строки
 local function drawMarquee(x, y, text, color)
-    local textLength = unicode.len(text)
+    local textLength = unicode.len(text) -- считаем символы, а не байты
 
     if textLength > maxWidth then
+        -- видимый кусок
         local visible = unicode.sub(text, scrollPos, scrollPos + maxWidth - 1)
 
         local visibleLen = unicode.len(visible)
@@ -981,19 +1048,24 @@ local function message(msg, colormsg, limit, noStack)
     limit = limit or 34
     msg = tostring(msg)
 
+    -- режем сообщение
     local parts = wrapText(msg, limit)
 
     local found = false
 
     if not noStack then
+        -- ищем совпадение среди последних строк
         for i = #consoleLines, 11, -1 do
             local line = consoleLines[i]
             if line.textBase == msg then
                 line.count = (line.count or 1) + 1
 
+                -- пересобираем все части, икс только на последней
                 local lastPart = parts[#parts] .. "(x" .. line.count .. ")"
 
+                -- если влезает → заменяем последнюю строку
                 if utf8len(lastPart) <= limit then
+                    -- обновляем существующие строки
                     for j = 1, #parts - 1 do
                         local idx = i - (#parts - j)
                         if consoleLines[idx] then
@@ -1009,12 +1081,13 @@ local function message(msg, colormsg, limit, noStack)
         end
     end
 
+    -- если не нашли или не влезло → добавляем как новые строки
     if not found then
         for _, part in ipairs(parts) do
             table.remove(consoleLines, 1)
             table.insert(consoleLines, {
                 text = part,
-                textBase = msg,
+                textBase = msg, -- вся строка как ключ для стака
                 color = colormsg,
                 count = 1
             })
@@ -1080,6 +1153,7 @@ local function safeCall(proxy, method, default, ...)
     if proxy and proxy[method] then
         local ok, result = pcall(proxy[method], proxy, ...)
         if ok and result ~= nil then
+            -- Для числовых значений по умолчанию гарантируем возврат числа
             if type(default) == "number" then
                 local numberResult = tonumber(result)
                 if numberResult then
@@ -1111,7 +1185,7 @@ local function safeCall(proxy, method, default, ...)
             end
 
             if debugLog == true then
-                message("'" .. method .. "': " .. tostring(result), colors.msgerror, 34)
+                message("'" .. method .. "': " .. tostring(result), colors.msgwarn, 34)
             end
 
             -- Убрал рекурсивный вызов safeCall чтобы избежать потенциальной бесконечной рекурсии
@@ -1228,9 +1302,11 @@ local function drawStatic()
     if picture then
         buffer.drawImage(1, 1, picture)
     else
-        buffer.drawText(1, 1, colors.msgerror, "Ошибка загрузки изображения!")
+        buffer.drawText(1, 1, colors.msgerror, "Ошибка загрузки изображения! Проверьте наличие файлов 'image/reactorGUI.pic'")
         return
     end
+    animatedButton(1, 3, 44, "🔧", nil, nil, 4, nil, nil, 0xa91df9, 0xffffff)
+    animatedButton(1, 3, 47, "ⓘ", nil, nil, 4, nil, nil, 0xa91df9, 0x05e2ff)
     animatedButton(1, 10, 44, "Отключить реакторы!", nil, nil, 24, nil, nil, 0xfd3232)
     animatedButton(1, 38, 44, "Запуск реакторов!", nil, nil, 24, nil, nil, 0x35e525)
     animatedButton(1, 66, 44, "Переключить тему", nil, nil, 18, nil, nil, nil)
@@ -1411,20 +1487,37 @@ end
 local function drawFluidinfo()
     local fl_y1 = 30
     if flux_network == true then fl_y1 = 27 end
-    buffer.drawRectangle(123, fl_y1-1, 35, 4, colors.bg, 0, " ")
+    buffer.drawRectangle(123, fl_y1-1, 35, 6, colors.bg, 0, " ") -- высота +6 строк
+
     for i = 0, 35 - 1 do
         buffer.drawText(123 + i, fl_y1-2, colors.bg, brailleChar(brail_console[1]))
     end
     for i = 0, 35 - 1 do
         buffer.drawText(123 + i, fl_y1, colors.bg2, brailleChar(brail_console[2]))
     end
+
     buffer.drawText(124, fl_y1-1, colors.textclr, "Жидкости в МЭ сети:")
-    
+
     drawDigit(125, fl_y1+1, brail_fluid, 0x0088ff)
 
     local val, unit = formatFluid(fluidInMe or 0)
     drawNumberWithText(143, fl_y1+1, (me_network and (val or 0) or 0), 2, colors.textclr, unit, colors.textclr)
+
+    -- === ВРЕМЯ ОСТАТКА ЖИДКОСТИ ===
+    local consumption = consumeSecond
+    local timeLeftSec, timeStr = getTimeLeft(fluidInMe, consumption)
+
+    local timeColor = timeLeftSec == math.huge and colors.textclr or getTimeLeftColor(timeLeftSec)
+
+    buffer.drawText(124, fl_y1+3, colors.textclr, "Осталось жидкости:")
+    drawNumberWithText(143, fl_y1+4, timeStr, 2, timeColor)
+
+    -- Проверка на предупреждения
+    if me_network and fluidInMe > 0 and consumption > 0 then
+        checkFluidWarnings(fluidInMe, consumption, timeLeftSec)
+    end
 end
+
 
 local function drawFluxRFinfo()
     initFlux()
@@ -1628,6 +1721,19 @@ local function stop(num)
     end
     if not num then
         message("Реакторы отключены!", colors.msginfo, 34)
+    end
+end
+
+local function silentstop(num) -- Ещё один костыльчик
+    for i = num or 1, num or reactors do
+        local proxy = reactors_proxy[i]
+        local rType = reactor_type[i]
+        safeCall(proxy, "deactivate")
+        reactor_work[i] = false
+        drawStatus()
+        if any_reactor_on == false then
+            work = false
+        end
     end
 end
 
@@ -1995,6 +2101,7 @@ local function loadChangelog(url, tmpFile)
 end
 
 local function handleChatCommand(nick, msg, args)
+    -- Проверяем разрешения пользователя
     local hasPermission = false
     for _, user in ipairs(users) do
         if user == nick then
@@ -2010,12 +2117,13 @@ local function handleChatCommand(nick, msg, args)
         return
     end
     
-    if msg:match("^@help") then
+    -- Обрабатываем команды
+    if msg == "@help" then
         if isChatBox then
             chatBox.say("§e=== Команды Reactor Control ===")
             chatBox.say("§a@help - список команд")
             chatBox.say("§a@info - информация о системе")
-            chatBox.say("§a@useradd - добавить пользователя (пример: @useradd Ник)")
+            chatBox.say("§a@useradd - добавить пользователя (пример: @useradd Ник)") -- Сделай
             chatBox.say("§a@userdel - удалить пользователя (пример: @userdel Ник)")
             chatBox.say("§a@status - статус системы")
             chatBox.say("§a@setporog - установка порога жидкости (пример: @setporog 500)")
@@ -2023,7 +2131,7 @@ local function handleChatCommand(nick, msg, args)
             chatBox.say("§a@stop - остановка всех реакторов (или @stop 1 для остановки только 1-го)")
             chatBox.say("§a@exit - выход из программы")
             chatBox.say("§a@restart - перезагрузка компьютера")
-            chatBox.say("§a@changelog - показать изменения в обновлениях(пример: @changelog 1.1.1)")
+            chatBox.say("§a@changelog - показать изменения в обновлениях(пример: @changelog 1.1.1)") -- Скачивается массив из гитхаба в массиве ченджлог выглядит так {"1.0.0 - описание, переносы строк и тп, все учитывать и выводить в чат","1.0.1 - описание","1.1.0 - описание"}
         end
         
     elseif msg:match("^@status") then
@@ -2103,7 +2211,7 @@ local function handleChatCommand(nick, msg, args)
             end
         end
         
-    elseif msg:match("^@info") then
+    elseif msg == "@info" then
         if isChatBox then
             chatBox.say("§bReactor Control v" .. version .. " Build " .. build)
             chatBox.say("§aАвтор: §eP1KaChU337")
@@ -2112,7 +2220,7 @@ local function handleChatCommand(nick, msg, args)
             chatBox.say("§aИгроки с доступом: §5" .. table.concat(users, ", "))
             chatBox.say("§aСпасибо за использование программы!")
         end
-    elseif msg:match("^@exit") then
+    elseif msg == "@exit" then
         if isChatBox then
             chatBox.say("§cЗавершаю работу программы...")
             if work == true then
@@ -2138,6 +2246,7 @@ local function handleChatCommand(nick, msg, args)
     elseif msg:match("^@useradd") then
         local newUser = args:match("^(%S+)")
         if newUser then
+            -- Проверка, нет ли уже такого пользователя
             for _, u in ipairs(users) do
                 if u == newUser then
                     chatBox.say("§cПользователь §5" .. newUser .. " §cуже есть в списке!")
@@ -2201,7 +2310,7 @@ local function handleChatCommand(nick, msg, args)
             chatBox.say("§aИспользуйте: @changelog <версия>")
         end
 
-    elseif msg:match("^@restart") then
+    elseif msg == "@restart" then
         if isChatBox then
             chatBox.say("§cПерезагрузка системы...")
         end
@@ -2211,6 +2320,7 @@ end
 
 local function stripFormatting(s)
     if not s then return "" end
+    -- убираем Minecraft-подобные цветовые коды '§x'
     s = s:gsub("§.", "")
     return s
 end
@@ -2221,38 +2331,27 @@ end
 
 local function chatMessageHandler()
     while not exit do
-        local _, _, nick, msg = event.pull("chat_message")
+        local eventData = { event.pull(1, "chat_message") }
+        if eventData[1] == "chat_message" then
+            local _, _, nick, rawMsg = table.unpack(eventData)
 
-        if type(msg) == "string" then
-            local cmd, args = msg:match("^(%S+)%s*(.*)$")
-            if cmd then
-                cmd = cmd:lower() -- на всякий случай в нижний регистр
+            -- очистить сообщение, привести к нижнему регистру и обрезать пробелы
+            local clean = trim(stripFormatting(tostring(rawMsg)):lower())
 
-                if cmd:match("^@help") then
-                    handleChatCommand(nick, "@help", args)
-                elseif cmd:match("^@status") then
-                    handleChatCommand(nick, "@status", args)
-                elseif cmd:match("^@setporog") then
-                    handleChatCommand(nick, "@setporog", args)
-                elseif cmd:match("^@start") then
-                    handleChatCommand(nick, "@start", args)
-                elseif cmd:match("^@stop") then
-                    handleChatCommand(nick, "@stop", args)
-                elseif cmd:match("^@restart") then
-                    handleChatCommand(nick, "@restart", args)
-                elseif cmd:match("^@exit") then
-                    handleChatCommand(nick, "@exit", args)
-                elseif cmd:match("^@changelog") then
-                    handleChatCommand(nick, "@changelog", args)
-                elseif cmd:match("^@useradd") then
-                    handleChatCommand(nick, "@useradd", args)
-                elseif cmd:match("^@userdel") then
-                    handleChatCommand(nick, "@userdel", args)
-                elseif cmd:match("^@info") then
-                    handleChatCommand(nick, "@info", args)
-                end
+            -- вытащить первую "словную" часть (команду) и остаток (аргументы)
+            local command = clean:match("^(%S+)")
+            local args = ""
+            if command then
+                args = clean:match("^%S+%s*(.*)$") or ""
+            end
+
+            -- если команда есть в списке — передаём в обработчик
+            if command and chatCommands[command] then
+                -- изменил сигнатуру: передаю команду и аргументы отдельно
+                handleChatCommand(nick, command, args)
             end
         end
+        os.sleep(0)
     end
 end
 
@@ -2304,6 +2403,38 @@ local function handleTouch(x, y, uuid)
 
         os.sleep(0.3)
         drawDynamic()
+    elseif 
+        y >= config.clickArea19.y1 and
+        y <= config.clickArea19.y2 and 
+        x >= config.clickArea19.x1 and 
+        x <= config.clickArea19.x2 then
+        buffer.drawRectangle(1, 44, 4, 3, colors.bg3, 0, " ")
+        animatedButton(1, 3, 44, "🔧", nil, nil, 4, nil, nil, 0x8100cc, 0xffffff)
+        animatedButton(2, 3, 44, "🔧", nil, nil, 4, nil, nil, 0x8100cc, 0xffffff)
+        buffer.drawChanges()
+
+        os.sleep(0.2)
+        animatedButton(1, 3, 44, "🔧", nil, nil, 4, nil, nil, 0xa91df9, 0xffffff)
+        buffer.drawChanges()
+        
+        os.sleep(0.3)
+        drawDynamic()
+    elseif 
+        y >= config.clickArea20.y1 and
+        y <= config.clickArea20.y2 and 
+        x >= config.clickArea20.x1 and 
+        x <= config.clickArea20.x2 then
+        buffer.drawRectangle(1, 47, 4, 3, colors.bg3, 0, " ")
+        animatedButton(1, 3, 47, "ⓘ", nil, nil, 4, nil, nil, 0x8100cc, 0x05e2ff)
+        animatedButton(2, 3, 47, "ⓘ", nil, nil, 4, nil, nil, 0x8100cc, 0x05e2ff)
+        buffer.drawChanges()
+
+        os.sleep(0.2)
+        animatedButton(1, 3, 47, "ⓘ", nil, nil, 4, nil, nil, 0xa91df9, 0x05e2ff)
+        buffer.drawChanges()
+        
+        os.sleep(0.3)
+        drawDynamic()    
     elseif 
         y >= config.clickArea4.y1 and
         y <= config.clickArea4.y2 and 
@@ -2527,10 +2658,14 @@ end
 
 -- ----------------------------------------------------------------------------------------------------
 local function mainLoop()
+    -- Сбрасываем все динамические переменные, чтобы избежать конфликта данных.
+    -- Это обеспечивает "чистый" старт при каждом запуске.
     reactors = 0
     any_reactor_on = false
     any_reactor_off = false
 
+    -- Очищаем массивы вместо сброса каждого элемента.
+    -- Это более надежно, так как гарантирует, что в массивах не останется старых данных.
     reactor_work = {}
     temperature = {}
     reactor_type = {}
@@ -2558,6 +2693,7 @@ local function mainLoop()
     local addr = initMe()
     initFlux()
     initChatBox()
+    silentstop()
     
     for i = 1, (flux_network and 19 or 21) do
         consoleLines[i] = ""
@@ -2580,6 +2716,7 @@ local function mainLoop()
     supportersText = loadSupportersFromURL("https://github.com/P1KaChU337/Reactor-Control-for-OpenComputers/raw/refs/heads/main/supporters.txt")
     changelog = loadChangelog("https://github.com/P1KaChU337/Reactor-Control-for-OpenComputers/raw/refs/heads/main/changelog.lua")
     updateReactorData()
+    
     if reactors ~= 0 then
         message("Реакторы инициализированы!", colors.msginfo, 34)
     else
@@ -2783,23 +2920,25 @@ local lastCrashTime = 0
 while not exit do
     local ok, err = xpcall(mainLoop, debug.traceback)
     if not ok then
-        local now = os.time()
+        local now = computer.uptime() -- Заменил os.time() на computer.uptime()
 
         if tostring(err):lower():find("interrupted") or exit == true then
             return
         end
         
         if now - lastCrashTime < 5 then
+            logError("FAILSAFE: Rapid crashing detected.")
+            message("Rapid crashing detected.", 0xff0000, 34)
             os.sleep(5)
         end
         lastCrashTime = now
 
         logError(err)
-        if debugLog == true then
-            message("ГЛОБАЛЬНАЯ ОШИБКА!!!", 0xff0000, 34)
-            message("Code: " .. tostring(err), 0xff0000, 34)
-            message("Перезапуск через 5 секунд...", 0xffa500, 34)
-        end
+        
+        message("Global Error!", 0xff0000, 34)
+        message("Code: " .. tostring(err), 0xff0000, 34)
+        message("Restarting in 3 seconds...", 0xffa500, 34)
+    
         os.sleep(3)
     end
 end
