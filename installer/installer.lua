@@ -1,5 +1,6 @@
 -- Reactor Control GUI Installer (std libs only)
--- Author: P1KaChU337
+-- Original Author: P1KaChU337
+-- Modified by: by-FreeMaN
 
 ------------------------------------ config ------------------------------------
 local REPOSITORY  = "https://raw.githubusercontent.com/by-FreeMaN/Reactor-Control-for-OpenComputers/refs/heads/main/"
@@ -11,7 +12,7 @@ local filesToDownload = {
   {url = REPOSITORY.."/lib/image.lua",                      path="/lib/image.lua"},
   {url = REPOSITORY.."/lib/doubleBuffering.lua",            path="/lib/doubleBuffering.lua"},
   {url = REPOSITORY.."/lib/event.lua",                      path="/lib/event.lua"},
-  {url = REPOSITORY.."home/nr_v1.1.lua",                path="/home/main.lua"},
+  {url = REPOSITORY.."home/nr_v1.1.lua",                   path="/home/main.lua"},
   {url = REPOSITORY.."home/images/reactorGUI.pic",          path="/home/images/reactorGUI.pic"},
   {url = REPOSITORY.."home/images/reactorGUI_white.pic",    path="/home/images/reactorGUI_white.pic"},
 }
@@ -89,7 +90,7 @@ local function drawChrome()
   frame(X,Y,W,H)
   -- title
   text(X+2, Y, "┤ "..appTitle.." ├", COL_TEXT)
-  text(X+W-20, Y, "[by P1KaChU337]", COL_DIM)
+  text(X+W-20, Y, "[by-FreeMaN]", COL_DIM)
   -- логотип
   text(X+W-15, Y+1, "☢ REACTOR", COL_WARN)
   -- секции
@@ -171,7 +172,7 @@ local function install()
     writeStatus("Completed with errors. Check log.", COL_WARN)
   end
 
-  text(X+2, Y+H-2, "by P1KaChU337 | Reactor Control Installer", COL_DIM)
+  text(X+2, Y+H-2, "by-FreeMaN | Reactor Control Installer", COL_DIM)
 
   if rebootAfter then
     for n=3,1,-1 do
@@ -191,5 +192,3 @@ if not ok then
   term.clear()
   io.stderr:write("Installer crashed: "..tostring(err).."\n")
 end
-
-

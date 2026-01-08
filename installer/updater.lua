@@ -1,45 +1,36 @@
--- Reactor Control — Smart Updater
--- Проверяет version.txt, обновляет main.lua и GUI
--- Автор: GigaCode (для OpenComputers)
+-- Reactor Control GUI Updater (std libs only)
+-- Original Author: P1KaChU337
+-- Modified by: by-FreeMaN
 
--- ==================================================================
--- НАСТРОЙКИ
--- ==================================================================
+------------------------------------ config ------------------------------------
+local REPOSITORY  = "https://raw.githubusercontent.com/by-FreeMaN/Reactor-Control-for-OpenComputers/refs/heads/main/"
 
--- 🔧 Замените на ссылку вашего репозитория
-local REPO = "https://raw.githubusercontent.com/by-FreeMaN/Reactor-Control-for-OpenComputers/main/"
-
--- Файл с актуальной версией
-local VERSION_URL = REPO .. "version.txt"
-
--- Где хранится текущая версия (локально)
-local OLD_VERSION_FILE = "/home/data/oldVersion.txt"
-
--- Перезагружать после обновления?
-local AUTO_REBOOT = true
-
--- Файлы для обновления
 local filesToDownload = {
-    { url = REPO .. "home/main.lua",                path = "/home/main.lua" },
-    { url = REPO .. "home/images/reactorGUI.pic",   path = "/home/images/reactorGUI.pic" },
-    { url = REPO .. "home/images/reactorGUI_white.pic", path = "/home/images/reactorGUI_white.pic" },
+  {url = REPOSITORY.."home/nr_v1.1.lua", path="/home/main.lua"},
 }
 
--- ==================================================================
--- ОСТАЛЬНОЙ КОД (не нужно менять)
--- ==================================================================
+local newVer = "1.1.2"
+local oldVer = "1.0"
+local f = io.open("oldVersion.txt", "r")
+if f then
+  oldVer = f:read("*l") or "1.0"
+  f:close()
+  os.execute("rm oldVersion.txt > /dev/null 2>&1")
+end
+local appTitle = "Reactor Control v".. oldVer .. " --> v" .. newVer .. " — Updater"
+local rebootAfter = true
+-------------------------------------------------------------------------------
+local computer  = require("computer")
 local component = require("component")
-local gpu = component.gpu
-local term = require("term")
-local event = require("event")
-local shell = require("shell")
-local fs = require("filesystem")
-local internet = require("internet")
+local gpu       = component.gpu
+local term      = require("term")
+local event     = require("event")
+local unicode   = require("unicode")
+local shell     = require("shell")
+local fs        = require("filesystem")
+local computer  = require("computer")
 
-local sw, sh = gpu.getResolution()
-local oldBG, oldFG = gpu.getBackground(), gpu.getForeground()
-
--- Цвета
+-- colors
 local COL_BG     = 0x0A0F0A
 local COL_FRAME  = 0x0F1F0F
 local COL_TEXT   = 0xDDFFDD
@@ -50,222 +41,155 @@ local COL_OK     = 0x7CFF7C
 local COL_BARBG  = 0x123312
 local COL_BAR    = 0x22FF88
 
+-- save/restore screen state
+local sw, sh = gpu.getResolution()
+local oldBG, oldFG = gpu.getBackground(), gpu.getForeground()
+
 local function safeSetBG(c) gpu.setBackground(c) end
 local function safeSetFG(c) gpu.setForeground(c) end
 
-local function fill(x, y, w, h, bg)
-    safeSetBG(bg); gpu.fill(x, y, w, h, " ")
+local function fill(x,y,w,h,bg)
+  safeSetBG(bg); gpu.fill(x,y,w,h," ")
 end
 
-local function text(x, y, str, fg)
-    if fg then safeSetFG(fg) end
-    gpu.set(x, y, str)
+local function text(x,y,str,fg)
+  if fg then safeSetFG(fg) end
+  gpu.set(x,y,str)
 end
 
-local function centerX(w) return math.floor((sw - w) / 2) + 1 end
-local function centerY(h) return math.floor((sh - h) / 2) + 1 end
+local function centerX(w) return math.floor((sw - w)/2)+1 end
+local function centerY(h) return math.floor((sh - h)/2)+1 end
 
-local function frame(x, y, w, h)
-    safeSetFG(COL_DIM)
-    gpu.set(x, y, "┌" .. string.rep("─", w - 2) .. "┐")
-    for i = 1, h - 2 do
-        gpu.set(x, y + i, "│" .. string.rep(" ", w - 2) .. "│")
-    end
-    gpu.set(x, y + h - 1, "└" .. string.rep("─", w - 2) .. "┘")
+local function frame(x,y,w,h)
+  safeSetFG(COL_DIM)
+  gpu.set(x,y,       "┌"..string.rep("─",w-2).."┐")
+  for i=1,h-2 do gpu.set(x,y+i,"│"..string.rep(" ",w-2).."│") end
+  gpu.set(x,y+h-1,   "└"..string.rep("─",w-2).."┘")
 end
 
--- UI
+local function progressBar(x,y,w,ratio)
+  local full = math.max(0, math.min(w, math.floor(w*ratio)))
+  safeSetBG(COL_BARBG); gpu.fill(x,y,w,1," ")
+  safeSetBG(COL_BAR);   gpu.fill(x,y,full,1," ")
+  safeSetBG(COL_BG)
+end
+
+local function shorten(str,maxLen)
+  if unicode.len(str) <= maxLen then return str end
+  return unicode.sub(str,1,maxLen-3).."..."
+end
+
+-- layout
 local W, H = 70, 22
 local X, Y = centerX(W), centerY(H)
+local PAD  = 2
 
-local function drawChrome(title)
-    term.clear()
-    safeSetBG(COL_BG); fill(1, 1, sw, sh, COL_BG)
-    fill(X, Y, W, H, COL_FRAME)
-    frame(X, Y, W, H)
-    text(X + 2, Y, "┤ " .. (title or "Updater") .. " ├", COL_TEXT)
-    text(X + W - 15, Y + 1, "☢ UPDATE", COL_WARN)
-end
-
-local function log(msg, color)
-    local logTop = Y + 10
-    local logHeight = H - 11
-    local logLines = {}
-    
-    if #logLines >= logHeight then table.remove(logLines, 1) end
-    table.insert(logLines, msg:sub(1, W - 6))
-
-    for i = 1, logHeight do
-        fill(X + 2, logTop + i - 1, W - 4, 1, COL_FRAME)
-        local ln = logLines[i]
-        if ln then text(X + 2, logTop + i - 1, ln, color or COL_TEXT) end
-    end
+local function drawChrome()
+  term.clear()
+  safeSetBG(COL_BG); fill(1,1,sw,sh,COL_BG)
+  fill(X,Y,W,H,COL_FRAME)
+  frame(X,Y,W,H)
+  -- title
+  text(X+2, Y, "┤ "..appTitle.." ├", COL_TEXT)
+  text(X+W-20, Y, "[by-FreeMaN]", COL_DIM)
+  -- логотип
+  text(X+W-15, Y+1, "☢ REACTOR", COL_WARN)
+  -- секции
+  text(X+2, Y+2, "Status:", COL_DIM)
+  text(X+2, Y+6, "Progress:", COL_DIM)
+  text(X+2, Y+9, "Log:", COL_DIM)
+  fill(X+2, Y+7, W-4, 1, COL_BARBG)
 end
 
 local function writeStatus(msg, color)
-    fill(X + 2, Y + 3, W - 4, 2, COL_FRAME)
-    text(X + 2, Y + 3, msg:sub(1, W - 6), color or COL_TEXT)
+  fill(X+2, Y+3, W-4, 2, COL_FRAME)
+  text(X+2, Y+3, shorten(msg,W-6), color or COL_TEXT)
 end
 
-local function progressBar(ratio)
-    local x, y, w = X + 2, Y + 7, W - 4
-    local full = math.floor(w * ratio)
-    fill(x, y, w, 1, COL_BARBG)
-    fill(x, y, full, 1, COL_BAR)
+local logTop, logHeight = Y+10, H-11
+local logLines = {}
+
+local function log(msg, color)
+  color = color or COL_TEXT
+  if #logLines >= logHeight then table.remove(logLines,1) end
+  table.insert(logLines, shorten(msg,W-6))
+  for i=1,logHeight do
+    fill(X+2, logTop+i-1, W-4, 1, COL_FRAME)
+    local ln = logLines[i]
+    if ln then text(X+2, logTop+i-1, ln, color) end
+  end
 end
 
--- Загрузка файла
-local function download(url, path)
-    writeStatus("Downloading: " .. path:match("[^/]+$"), COL_TEXT)
-    log("GET " .. url:sub(1, 40) .. "...", COL_DIM)
-
-    local ok, response = pcall(internet.request, url .. "?ignore_cert=true")
-    if not ok or not response then
-        log("❌ Failed: " .. url:match("[^/]+/$") .. "...", COL_ERR)
-        return false
-    end
-
-    local data = ""
-    repeat
-        local chunk = response.read(2048)
-        if chunk then data = data .. chunk end
-        os.sleep(0)
-    until not chunk
-
-    pcall(function() response:close() end)
-
-    local dir = path:match("(.+)/")
-    if dir and not fs.exists(dir) then
-        shell.execute("mkdir -p " .. dir)
-    end
-
-    local file = io.open(path, "wb")
-    if not file then
-        log("❌ Cannot write: " .. path, COL_ERR)
-        return false
-    end
-    file:write(data)
-    file:close()
-
-    log("✅ OK: " .. path, COL_OK)
-    return true
+local spinner = {"⠋","⠙","⠹","⠸","⠼","⠴","⠦","⠧","⠇","⠏"}
+local spinIdx = 1
+local function tickSpinner()
+  local s = spinner[spinIdx]; spinIdx = spinIdx % #spinner + 1
+  text(X+W-4, Y+3, s, COL_DIM)
 end
 
--- Получить текущую версию
-local function getCurrentVersion()
-    if fs.exists(OLD_VERSION_FILE) then
-        local f = io.open(OLD_VERSION_FILE, "r")
-        local ver = f:read("*l")
-        f:close()
-        return ver or "1.0"
-    end
-    return "1.0"
+local function ensureDirs()
+  if not fs.exists("/lib/FormatModules") then fs.makeDirectory("/lib/FormatModules") end
+  if not fs.exists("/home/images/") then fs.makeDirectory("/home/images/") end
 end
 
--- Получить последнюю версию
-local function getLatestVersion()
-    local ok, response = pcall(internet.request, VERSION_URL .. "?ignore_cert=true")
-    if not ok or not response then
-        return nil, "❌ Не удалось подключиться к серверу"
-    end
+local function install()
+  drawChrome()
+  ensureDirs()
+  writeStatus("Initializing updater…", COL_DIM)
+  log("Preparing directories…", COL_DIM)
 
-    local data = ""
-    repeat
-        local chunk = response.read(1024)
-        if chunk then data = data .. chunk end
-    until not chunk
-    pcall(function() response:close() end)
+  local total = #filesToDownload
+  local okCount, failCount = 0, 0
 
-    local latest = data:match("%S+")
-    if not latest then
-        return nil, "❌ Версия не найдена в version.txt"
-    end
+  for i, f in ipairs(filesToDownload) do
+    local label = string.format("[%02d/%02d] %s", i, total, shorten(f.path,30))
+    writeStatus("Updating "..label, COL_TEXT)
+    log("wget "..shorten(f.url,45), COL_DIM)
 
-    return latest
-end
+    local res = shell.execute("wget -fq "..f.url.." "..f.path)
+    tickSpinner()
 
--- Основной процесс
-local function update()
-    drawChrome("Updater v1.2")
-
-    local currentVer = getCurrentVersion()
-    writeStatus("Проверка обновлений...", COL_DIM)
-    log("Текущая версия: " .. currentVer, COL_TEXT)
-
-    local latestVer, err = getLatestVersion()
-    if not latestVer then
-        writeStatus(err, COL_ERR)
-        log("URL: " .. VERSION_URL, COL_DIM)
-        return false
-    end
-
-    log("Найдена версия: v" .. latestVer, COL_OK)
-
-    if currentVer == latestVer then
-        writeStatus("✅ У вас актуальная версия!", COL_OK)
-        log("Обновление не требуется.", COL_DIM)
-        return true
-    end
-
-    writeStatus("Обновление: v" .. currentVer .. " → v" .. latestVer, COL_WARN)
-    log("Начинаем загрузку...", COL_TEXT)
-
-    local total = #filesToDownload
-    local okCount, failCount = 0, 0
-
-    for i, f in ipairs(filesToDownload) do
-        if download(f.url, f.path) then
-            okCount = okCount + 1
-        else
-            failCount = failCount + 1
-        end
-        progressBar(i / total)
-        text(X + 2, Y + 8, ("Прогресс: %d%% | OK:%d Fail:%d"):format((i / total) * 100, okCount, failCount), COL_DIM)
-    end
-
-    -- Сохраняем новую версию
-    local f = io.open(OLD_VERSION_FILE, "w")
-    if f then
-        f:write(latestVer .. "\n")
-        f:close()
-    end
-
-    -- .shrc
-    local shrc = io.open("/home/.shrc", "w")
-    if shrc then
-        shrc:write("main.lua\n")
-        shrc:close()
-    end
-
-    if failCount == 0 then
-        writeStatus("✅ Обновление v" .. latestVer .. " установлено!", COL_OK)
+    if res then
+      okCount = okCount + 1
+      log("OK: "..shorten(f.path,45), COL_OK)
     else
-        writeStatus("⚠ Установлено с ошибками", COL_WARN)
+      failCount = failCount + 1
+      log("ERROR: "..shorten(f.url,45), COL_ERR)
     end
 
-    if AUTO_REBOOT then
-        for n = 5, 1, -1 do
-            text(X + W - 20, Y + H - 2, ("Перезагрузка через %d..."):format(n), COL_TEXT)
-            os.sleep(1)
-        end
-        shell.execute("reboot")
-    else
-        text(X + 2, Y + H - 2, "Нажмите Enter...", COL_TEXT)
-        event.pull("key_down")
+    local ratio = i/total
+    progressBar(X+2, Y+7, W-4, ratio)
+    text(X+2, Y+8, string.format("Progress: %d%%  OK:%d  Fail:%d",
+      math.floor(ratio*100), okCount, failCount), COL_DIM)
+  end
+
+  local f = io.open("/home/.shrc","w")
+  if f then f:write("main.lua\n"); f:close() end
+  log("Autostart preserved: /home/.shrc", COL_OK)
+
+  if failCount == 0 then
+    writeStatus("Update v".. oldVer .." → v" .. newVer .." complete!", COL_OK)
+  else
+    writeStatus("Update completed with errors. Check log.", COL_WARN)
+  end
+
+  text(X+2, Y+H-2, "by-FreeMaN | Reactor Control Updater", COL_DIM)
+
+  if rebootAfter then
+    for n=5,1,-1 do
+      text(X+W-20, Y+H-2, ("Reboot in %d..."):format(n), COL_TEXT)
+      os.sleep(1)
     end
-
-    return true
-end
-
--- Запуск
-local ok, err = pcall(update)
-safeSetBG(oldBG)
-safeSetFG(oldFG)
-if not ok then
-    term.clear()
-    print("❌ Ошибка обновления:")
-    print(err)
-    print("Нажмите Enter...")
+    shell.execute("reboot")
+  else
+    text(X+2, Y+H-2, "Press any key to exit…", COL_TEXT)
     event.pull("key_down")
+  end
 end
 
+local ok, err = pcall(install)
+safeSetBG(oldBG); safeSetFG(oldFG)
+if not ok then
+  term.clear()
+  io.stderr:write("Updater crashed: "..tostring(err).."\n")
+end
